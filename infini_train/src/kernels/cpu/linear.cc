@@ -15,9 +15,57 @@ std::shared_ptr<Tensor> MatmulForward(const std::shared_ptr<Tensor> &input, cons
     // TODO：实现CPU上的矩阵乘法前向计算
     // REF:
     // =================================== 作业 ===================================
+    
+    if (input->Dims().size()==2 && other->Dims().size()==2) {
+        auto output = std::make_shared<Tensor>(
+            std::vector<int64_t>{input->Dims()[0], other->Dims()[1]}, DataType::kFLOAT32);
+        output->EigenMatrix() = input->EigenMatrix() * other->EigenMatrix();
+        return output;            
+    }else {
+        const auto &input_dims = input->Dims();
+        const auto &other_dims = other->Dims();        
 
-    auto output = std::make_shared<Tensor>();
-    return {output};
+        // 计算输出维度,假设batch维度无需广播处理（纬度数一致且相等）
+        CHECK_EQ(input_dims.size(), other_dims.size());
+        size_t max_rank = input_dims.size();
+        std::vector<int64_t> output_dims(max_rank);
+        output_dims[max_rank - 2] = input_dims[input_dims.size() - 2];
+        output_dims[max_rank - 1] = other_dims[other_dims.size() - 1];
+        
+        for (int i = 0; i < max_rank - 2; ++i) {
+            int64_t dim1 = input_dims[max_rank - 3 - i];
+            int64_t dim2 = other_dims[other_dims.size() - 3 - i];
+            CHECK_EQ(dim1, dim2);
+            output_dims[max_rank - 3 - i] = dim1;
+        }
+
+        auto output = std::make_shared<Tensor>(output_dims, DataType::kFLOAT32);
+        
+        const int64_t M = input_dims[input_dims.size() - 2];
+        const int64_t K = input_dims[input_dims.size() - 1];
+        const int64_t N = other_dims[other_dims.size() - 1];
+
+        const int64_t batch_size = std::accumulate(output_dims.begin(), output_dims.end() - 2, 1, std::multiplies<int64_t>{});
+
+        float* in_ptr = input->EigenMatrix().data();
+        float* other_ptr = other->EigenMatrix().data();
+        float* out_ptr = output->EigenMatrix().data();
+        for (int i = 0; i < batch_size; ++i) {
+             long in_off = i * M * K;
+             long other_off = i * K * N;
+             long out_off = i * M * N;
+             
+             Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_in(
+                in_ptr + in_off, M, K);
+             Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_other(
+                other_ptr + other_off, K, N);
+             Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_out(
+                out_ptr + out_off, M, N);
+             
+             mat_out.noalias() = mat_in * mat_other;
+        }
+        return output;
+    }
 }
 
 std::tuple<std::shared_ptr<Tensor>, std::shared_ptr<Tensor>>
@@ -27,9 +75,60 @@ MatmulBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
     // TODO：实现CPU上的矩阵乘法反向传播
     // REF:
     // =================================== 作业 ===================================
+    /*
+    对input[i][j],grad_input[i][j] = sum_k(grad_output[i][k] * other[j][k])
+    所有grad_input = grad_output * other^T
+    对other[i][j],grad_other[i][j] = sum_k(input[k][i] * grad_output[k][j])
+    所有grad_other = input^T * grad_output
+    */
+    auto grad_input = std::make_shared<Tensor>(input->Dims(), DataType::kFLOAT32);
+    auto grad_other = std::make_shared<Tensor>(other->Dims(), DataType::kFLOAT32);
+    if (input->Dims().size()==2 && other->Dims().size()==2 && grad_output->Dims().size()==2) {
+        grad_input->EigenMatrix() = grad_output->EigenMatrix() * other->EigenMatrix().transpose();
+        grad_other->EigenMatrix() = input->EigenMatrix().transpose() * grad_output->EigenMatrix();
+    } else {
+        // bmm反向传播
+        const auto &input_dims = input->Dims();
+        const auto &other_dims = other->Dims();
+        const auto &grad_dims = grad_output->Dims();
 
-    auto grad_input = std::make_shared<Tensor>();
-    auto grad_other = std::make_shared<Tensor>();
+        const int64_t batch_size = std::accumulate(grad_dims.begin(), grad_dims.end() - 2, 1, std::multiplies<int64_t>{});
+
+        // 初始化梯度为0
+        grad_input->EigenMatrix().setZero();
+        grad_other->EigenMatrix().setZero();
+
+        float* in_ptr = input->EigenMatrix().data();
+        float* other_ptr = other->EigenMatrix().data();
+        float* g_out_ptr = grad_output->EigenMatrix().data();
+        float* g_in_ptr = grad_input->EigenMatrix().data();
+        float* g_other_ptr = grad_other->EigenMatrix().data();
+
+        const int64_t M = input_dims[input_dims.size() - 2];
+        const int64_t K = input_dims[input_dims.size() - 1];
+        const int64_t N = other_dims[other_dims.size() - 1];
+
+        for (int i = 0; i < batch_size; ++i) {
+            long in_off = i * M * K;
+            long other_off = i * K * N;
+            long out_off = i * M * N;
+
+            Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_in(
+               in_ptr + in_off, M, K);
+            Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_other(
+               other_ptr + other_off, K, N);
+            Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_g_out(
+               g_out_ptr + out_off, M, N);
+            
+            Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_g_in(
+               g_in_ptr + in_off, M, K);
+            Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> mat_g_other(
+               g_other_ptr + other_off, K, N);
+            
+            mat_g_in.noalias() += mat_g_out * mat_other.transpose();
+            mat_g_other.noalias() += mat_in.transpose() * mat_g_out;
+        }
+    }
     return {grad_input, grad_other};
 }
 
