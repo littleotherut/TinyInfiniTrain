@@ -28,8 +28,49 @@ std::shared_ptr<Tensor> MatmulForward(const std::shared_ptr<Tensor> &input, cons
     // TODO：实现CUDA上的矩阵乘法前向计算
     // REF:
     // =================================== 作业 ===================================
+    const auto &input_dims = input->Dims();
+    const auto &other_dims = other->Dims();        
+    CHECK_EQ(input_dims.size(), other_dims.size());
+    size_t max_rank = input_dims.size();
+    std::vector<int64_t> output_dims(max_rank);
+    const int64_t M = input_dims[input_dims.size() - 2];
+    const int64_t K = input_dims[input_dims.size() - 1];
+    const int64_t N = other_dims[other_dims.size() - 1];
+    const int64_t batch_size = std::accumulate(input_dims.rbegin() + 2, input_dims.rend(), 1, std::multiplies<int64_t>{});
+    output_dims[max_rank - 2] = M;
+    output_dims[max_rank - 1] = N;
+    
+    for (int i = 0; i < max_rank - 2; ++i) {
+        int64_t dim1 = input_dims[max_rank - 3 - i];
+        int64_t dim2 = other_dims[other_dims.size() - 3 - i];
+        CHECK_EQ(dim1, dim2);
+        output_dims[max_rank - 3 - i] = dim1;
+    }
 
-    auto output = std::make_shared<Tensor>();
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    cublasHandle_t handle;
+    CUBLAS_CHECK(cublasCreate(&handle));
+
+    auto output = std::make_shared<Tensor>(output_dims, DataType::kFLOAT32, input->GetDevice());
+    
+    // C = A * B -> C^T = B^T * A^T
+    // A: input (M x K), B: other (K x N), C: output (M x N)
+    // To get C in Row-Major (which is C^T in Col-Major), we compute B^T * A^T in Col-Major
+    // Since input/other are Row-Major, they correspond to A^T/B^T in Col-Major directly.
+    // So we pass other as "A" (the left operand) and input as "B" (the right operand)
+    // matrix dims: other is K x N (lda=N), input is M x K (ldb=K)
+    // op(A): N x K (transposed from K x N in Col-Major view of Row-Major data? No.)
+    // Let's use the swapping rule:
+    // To compute RowMajor(A) * RowMajor(B), call cublasSgemm(..., B, A) with m=N, n=M, k=K
+    
+    CUBLAS_CHECK(cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha,
+                             static_cast<const float *>(other->DataPtr()), N, K * N,
+                             static_cast<const float *>(input->DataPtr()), K, M * K,&beta,
+                             static_cast<float *>(output->DataPtr()), N, M * N,
+                             batch_size));
+    CUBLAS_CHECK(cublasDestroy(handle));
+
     return output;
 }
 
@@ -40,9 +81,44 @@ MatmulBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
     // TODO：实现CUDA上的矩阵乘法反向传播
     // REF:
     // =================================== 作业 ===================================
+    
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    const auto &input_dims = input->Dims();
+    const auto &other_dims = other->Dims();
+    cublasHandle_t handle;
+    CUBLAS_CHECK(cublasCreate(&handle));
+    auto grad_input = std::make_shared<Tensor>(input_dims, DataType::kFLOAT32, input->GetDevice());
+    auto grad_other =  std::make_shared<Tensor>(other_dims, DataType::kFLOAT32, other->GetDevice());
+    // compute grad_input
+    // grad_input = grad_output * other^T
+    // Swap rule: grad_input^T = other * grad_output^T
+    // We compute other * grad_output^T in ColMajor.
+    // Left: other (RowMajor KxN -> ColMajor NxK). We need ColMajor KxN. So OP_T. lda=N.
+    // Right: grad_output (RowMajor MxN -> ColMajor NxM). We need ColMajor NxM. So OP_N. ldb=N.
+    // Result m=K, n=M, k=N. ldc=K.
+    const int64_t M = input_dims[input_dims.size() - 2];
+    const int64_t K = input_dims[input_dims.size() - 1];
+    const int64_t N = other_dims[other_dims.size() - 1];
+    const int64_t batch_size = std::accumulate(input_dims.rbegin() + 2, input_dims.rend(), 1, std::multiplies<int64_t>{});
 
-    auto grad_input = std::make_shared<Tensor>();
-    auto grad_other = std::make_shared<Tensor>();
+    CUBLAS_CHECK(cublasSgemmStridedBatched(handle, CUBLAS_OP_T, CUBLAS_OP_N, K, M, N, &alpha,
+                            static_cast<const float *>(other->DataPtr()), N, K * N,
+                            static_cast<const float *>(grad_output->DataPtr()), N, M * N, &beta,
+                            static_cast<float *>(grad_input->DataPtr()), K, M * K,
+                            batch_size));
+    // compute grad_other
+    // grad_other = input^T * grad_output
+    // Swap rule: grad_other^T = grad_output^T * input
+    // Left: grad_output (RowMajor MxN -> ColMajor NxM). We need ColMajor NxM. So OP_N. lda=N.
+    // Right: input (RowMajor MxK -> ColMajor KxM). We need ColMajor MxK (input itself). So OP_T. ldb=K.
+    // Result m=N, n=K, k=M. ldc=N.
+    CUBLAS_CHECK(cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T, N, K, M, &alpha,
+                            static_cast<const float *>(grad_output->DataPtr()), N, M * N,
+                            static_cast<const float *>(input->DataPtr()), K, M * K, &beta,
+                            static_cast<float *>(grad_other->DataPtr()), N, K * N,
+                            batch_size));
+    CUBLAS_CHECK(cublasDestroy(handle));
     return {grad_input, grad_other};
 }
 
