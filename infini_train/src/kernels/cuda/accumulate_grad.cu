@@ -22,6 +22,18 @@ void AccumulateGrad(const std::shared_ptr<Tensor> &gradient, float rate, const s
     AccumulateGradKernel<<<num_blocks, threads_per_block>>>(grad_ptr, rate, tensor_ptr, num_elements);
 }
 
+__global__ void AdamAccumulateGradKernel(const float *grad_ptr, float *param_ptr, float *m_ptr, float *v_ptr,
+                                        float learning_rate, float beta1, float beta2, float eps, int64_t t,
+                                        size_t num_elements) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < num_elements) {
+        m_ptr[idx] = beta1 * m_ptr[idx] + (1 - beta1) * grad_ptr[idx];
+        v_ptr[idx] = beta2 * v_ptr[idx] + (1 - beta2) * grad_ptr[idx] * grad_ptr[idx];
+        float m_hat = m_ptr[idx] / (1 - powf(beta1, t));
+        float v_hat = v_ptr[idx] / (1 - powf(beta2, t));
+        param_ptr[idx] -= learning_rate * m_hat / (sqrtf(v_hat) + eps);
+    }
+}
 void AdamAccumulateGrad(const std::shared_ptr<Tensor> &grad, const std::shared_ptr<Tensor> &param,
                         const std::shared_ptr<Tensor> &m, const std::shared_ptr<Tensor> &v, float learning_rate,
                         float beta1, float beta2, float eps, int64_t t) {
@@ -29,6 +41,16 @@ void AdamAccumulateGrad(const std::shared_ptr<Tensor> &grad, const std::shared_p
     // TODO：实现Adam优化器的梯度累积和参数更新
     // REF:
     // =================================== 作业 ===================================
+    size_t num_elements = grad->NumElements();
+
+    const float *grad_ptr = static_cast<const float *>(grad->DataPtr());
+    float *param_ptr = static_cast<float *>(param->DataPtr());
+    float *m_ptr = static_cast<float *>(m->DataPtr());
+    float *v_ptr = static_cast<float *>(v->DataPtr());
+    int threads_per_block = 256;
+    int num_blocks = (num_elements + threads_per_block - 1) / threads_per_block;
+
+    AdamAccumulateGradKernel<<<num_blocks, threads_per_block>>>(grad_ptr, param_ptr, m_ptr, v_ptr, learning_rate, beta1, beta2, eps, t, num_elements);
 }
 } // namespace infini_train::kernels::cuda
 
