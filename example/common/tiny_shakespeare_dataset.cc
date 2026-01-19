@@ -61,10 +61,55 @@ TinyShakespeareFile ReadTinyShakespeareFile(const std::string &path, size_t sequ
     | magic(4B) | version(4B) | num_toks(4B) | reserved(1012B) | token数据           |
     ----------------------------------------------------------------------------------
        =================================== 作业 =================================== */
+    std::ifstream ifs(path, std::ios::binary);
+    auto magic_bits = ReadSeveralBytesFromIfstream(4, &ifs);
+    int32_t magic = BytesToType<int32_t>(magic_bits, 0);
+    auto version_bits = ReadSeveralBytesFromIfstream(4, &ifs);
+    int32_t version = BytesToType<int32_t>(version_bits, 0);
+    auto num_toks_bits = ReadSeveralBytesFromIfstream(4, &ifs);
+    int32_t num_toks = BytesToType<int32_t>(num_toks_bits, 0);
+    auto dataset_type_iter = kTypeMap.find(magic);
+    if (dataset_type_iter == kTypeMap.end()) {
+        LOG(FATAL) << "不支持的TinyShakespeare数据集类型，magic: " << magic;
+    }
+    TinyShakespeareType dataset_type = dataset_type_iter->second;
+    ReadSeveralBytesFromIfstream(1012, &ifs); // reserved, unused
+    
+    // 读取原始数据到临时缓冲区
+    int64_t type_size = kTypeToSize.at(dataset_type);
+    int64_t total_size = static_cast<int64_t>(num_toks) * type_size;
+    std::vector<uint8_t> raw_data(total_size);
+    ifs.read(reinterpret_cast<char *>(raw_data.data()), total_size);
+    
+    // 创建 INT64 类型的 Tensor 并转换数据
+    infini_train::Tensor tensor({num_toks}, DataType::kINT64);
+    int64_t *dst = static_cast<int64_t *>(tensor.DataPtr());
+    
+    if (dataset_type == TinyShakespeareType::kUINT16) {
+        const uint16_t *src = reinterpret_cast<const uint16_t *>(raw_data.data());
+        for (int32_t i = 0; i < num_toks; ++i) {
+            dst[i] = static_cast<int64_t>(src[i]);
+        }
+    } else {  // kUINT32
+        const uint32_t *src = reinterpret_cast<const uint32_t *>(raw_data.data());
+        for (int32_t i = 0; i < num_toks; ++i) {
+            dst[i] = static_cast<int64_t>(src[i]);
+        }
+    }
+
+    TinyShakespeareFile file;
+    file.type = dataset_type;
+    file.dims = {static_cast<int64_t>(num_toks / sequence_length), static_cast<int64_t>(sequence_length)};
+    file.tensor = tensor;
+    return file;
 }
 } // namespace
 
-TinyShakespeareDataset::TinyShakespeareDataset(const std::string &filepath, size_t sequence_length) {
+TinyShakespeareDataset::TinyShakespeareDataset(const std::string &filepath, size_t sequence_length)
+    : text_file_(ReadTinyShakespeareFile(filepath, sequence_length)),
+      sequence_length_(sequence_length),
+      sequence_size_in_bytes_(sequence_length * sizeof(int64_t)),  // 数据已转换为 INT64
+      num_samples_(text_file_.dims[0] - 1) {
     // =================================== 作业 ===================================
     // TODO：初始化数据集实例
     // HINT: 调用ReadTinyShakespeareFile加载数据文件

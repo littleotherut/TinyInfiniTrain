@@ -277,7 +277,6 @@ std::shared_ptr<Tensor> Tensor::Contiguous() {
 }
 
 std::shared_ptr<Tensor> Tensor::Flatten(int64_t start, int64_t end) {
-    // return Contiguous()->View(new_shape);
     // =================================== 作业 ===================================
     // TODO：实现张量扁平化操作，将指定维度范围[start, end]内的所有维度合并为一个维度
     // HINT:
