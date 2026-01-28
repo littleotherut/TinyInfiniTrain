@@ -1,7 +1,8 @@
 # TinyInfiniTrain 作业报告
 
 ## 一、test 通过截图
-
+![alt text](image-1.png)
+![alt text](image.png)
 ## 二、作业步骤
 
 > 将代码填入下面代码块中指定位置，并详细描述完成该作业的解决思路和遇到的问题。
@@ -636,8 +637,10 @@ void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_siz
 ```
 
 #### 解决思路
-1. 
-
+1.  数据加载：读取 1024 字节的文件头获取元数据（Magic Number, Token总数等），根据 Magic Number 判定源数据是 `uint16` 还是 `uint32`，然后将其批量读取并转换为框架使用的 `int64` Tensor。
+2.  Tokenizer：处理 `[Header] + [Vocab List]`，词表项采用 `[1字节长度][字符串内容]` 的紧凑格式存储（通过xxd -s 1024 -l xxx可视化确认）。解码时直接索引词表数组返回对应字符串。
+3.  文本生成：送入当前序列进行`softmax`,采样，更新输入序列。注意数据在CPU/GPU间的同步。
 
 #### 遇到问题
-
+1.  文件格式读取，较为陌生开始不知道如何下手。
+2.  本地显存不足，无法频繁开销创建与销毁`handle`，在`linear`中进行简单修改。（参考往届实现后，仍无法解决在生成文本样例时出现的问题，后续在服务器上尝试一下）

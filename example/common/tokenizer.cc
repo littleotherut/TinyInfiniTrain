@@ -110,8 +110,8 @@ std::string Tokenizer::Decode(uint32_t token_id) const {
 
 void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_size, uint32_t sequence_length,
                              uint32_t text_length, Device device) const {
-    // LOG(INFO) << "Skip";
-    // return;
+    LOG(INFO) << "Skip";
+    return;
     std::vector<int64_t> dims;
     dims.assign({batch_size, sequence_length});
     // x_tensor (FLAGS_batch_size, FLAGS_sequence_length) eq:(4, 64)
@@ -164,10 +164,8 @@ void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_siz
         }
         // 将更新后的 CPU 数据同步到 GPU
         x = std::make_shared<infini_train::Tensor>(x_tensor.To(device));
-        return;
+        break;
     }
-    // return;
     std::cout << std::endl;
-    // return;
 }
 } // namespace infini_train

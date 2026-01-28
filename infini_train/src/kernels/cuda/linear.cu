@@ -92,8 +92,7 @@ MatmulBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
     const float beta = 0.0f;
     const auto &input_dims = input->Dims();
     const auto &other_dims = other->Dims();
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
+    cublasHandle_t handle = GetCublasHandle();
     auto grad_input = std::make_shared<Tensor>(input_dims, DataType::kFLOAT32, input->GetDevice());
     auto grad_other =  std::make_shared<Tensor>(other_dims, DataType::kFLOAT32, other->GetDevice());
     // compute grad_input
@@ -124,7 +123,6 @@ MatmulBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
                             static_cast<const float *>(input->DataPtr()), K, M * K, &beta,
                             static_cast<float *>(grad_other->DataPtr()), N, K * N,
                             batch_size));
-    CUBLAS_CHECK(cublasDestroy(handle));
     return {grad_input, grad_other};
 }
 
@@ -182,8 +180,7 @@ std::shared_ptr<Tensor> LinearForward(const std::shared_ptr<Tensor> &input, cons
 
     const float alpha = 1.0f;
     const float beta = 1.0f;
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
+    cublasHandle_t handle = GetCublasHandle();
     if (transpose) {
         // weight is [out_features, in_features] here
 
@@ -205,7 +202,6 @@ std::shared_ptr<Tensor> LinearForward(const std::shared_ptr<Tensor> &input, cons
                                  static_cast<const float *>(input->DataPtr()), in_features, &beta,
                                  static_cast<float *>(output->DataPtr()), out_features));
     }
-    CUBLAS_CHECK(cublasDestroy(handle));
     return output;
 }
 
@@ -253,8 +249,7 @@ LinearBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
 
     float alpha = 1.0f;
     float beta = 0.0f;
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
+    cublasHandle_t handle = GetCublasHandle();
 
     if (transpose) {
         // weight is [out_features, in_features] here
@@ -307,8 +302,6 @@ LinearBackward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tenso
             <<<num_blocks, threads_per_block>>>(static_cast<const float *>(grad_output->DataPtr()),
                                                 static_cast<float *>(grad_bias->DataPtr()), out_features, bs);
     }
-
-    CUBLAS_CHECK(cublasDestroy(handle));
 
     return {grad_input, grad_weight, grad_bias};
 }
