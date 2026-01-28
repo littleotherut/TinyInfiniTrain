@@ -23,6 +23,14 @@ namespace infini_train::kernels::cuda {
         }                                                                                                              \
     } while (0)
 
+cublasHandle_t GetCublasHandle() {
+    static thread_local cublasHandle_t handle = nullptr;
+    if (!handle) {
+        CUBLAS_CHECK(cublasCreate(&handle));
+    }
+    return handle;
+}
+
 std::shared_ptr<Tensor> MatmulForward(const std::shared_ptr<Tensor> &input, const std::shared_ptr<Tensor> &other) {
     // =================================== 作业 ===================================
     // TODO：实现CUDA上的矩阵乘法前向计算
@@ -49,8 +57,7 @@ std::shared_ptr<Tensor> MatmulForward(const std::shared_ptr<Tensor> &input, cons
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
+    cublasHandle_t handle = GetCublasHandle();
 
     auto output = std::make_shared<Tensor>(output_dims, DataType::kFLOAT32, input->GetDevice());
     
@@ -69,7 +76,6 @@ std::shared_ptr<Tensor> MatmulForward(const std::shared_ptr<Tensor> &input, cons
                              static_cast<const float *>(input->DataPtr()), K, M * K,&beta,
                              static_cast<float *>(output->DataPtr()), N, M * N,
                              batch_size));
-    CUBLAS_CHECK(cublasDestroy(handle));
 
     return output;
 }

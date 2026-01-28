@@ -126,7 +126,7 @@ void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_siz
     std::cout << "The meaning of life is";
 
     auto x = std::make_shared<infini_train::Tensor>(x_tensor.To(device));
-    uint64_t kRngState = kRngState;
+    uint64_t kRngState = 1337;
     LOG(INFO) << "start generate text:";
     for (int t = prompt_len; t < text_length; t++) {
         /* ===================================== 作业 =====================================
@@ -136,29 +136,26 @@ void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_siz
         auto output = model.Forward({x}); // GPT2/net.cc
         auto logits = output[0]; // (bs, seq_len, vocab_size)
         auto logits_dims = logits->Dims();
+
         int64_t vocab_size = logits_dims[2];
-        auto logits_cpu = logits->To(Device(DeviceType::kCPU, 0));
-        float* logits_ptr = static_cast<float*>(logits_cpu.DataPtr());
+        
+        // 优化：在Device端进行Slice和Softmax，减少D2H数据传输量
+        std::vector<int64_t> starts = {0, static_cast<int64_t>(t - 1), 0};
+        std::vector<int64_t> ends = {static_cast<int64_t>(batch_size), static_cast<int64_t>(t), vocab_size};
+        std::vector<int64_t> steps = {1, 1, 1};
 
-        for(uint32_t b = 0; b < batch_size; ++b) {
-            // 获取最后一个有效位置(t-1)的logits
-            float* logits_start = logits_ptr + b * sequence_length * vocab_size + (t - 1) * vocab_size;
+        auto sliced_logits = nn::function::Slice(logits, starts, ends, steps);
+        auto probs = nn::function::Softmax(sliced_logits, -1);
 
-        // softmax
-        float max_logit = *std::max_element(logits_start, logits_start + vocab_size);
-        std::vector<float> exp_logits(vocab_size);
-        float sum_exp = 0.0f;
-        for(int64_t v = 0; v < vocab_size; ++v) {
-            exp_logits[v] = std::exp(logits_start[v] - max_logit);
-            sum_exp += exp_logits[v];
-        }
-        for(int64_t v = 0; v < vocab_size; ++v) {
-            exp_logits[v] /= sum_exp;
-        }
+        auto probs_cpu = probs->To(Device(DeviceType::kCPU, 0));
+        float* probs_ptr = static_cast<float*>(probs_cpu.DataPtr());
 
-        // sample
+        for (uint32_t b = 0; b < batch_size; ++b) {
+            float* batch_probs = probs_ptr + b * vocab_size;
+
+            // sample
             float coin = RandomF32(kRngState);
-            int sampled_token_id = SampleMult(exp_logits.data(), vocab_size, coin);
+            int sampled_token_id = SampleMult(batch_probs, vocab_size, coin);
             x_buff[b * sequence_length + t] = sampled_token_id;
 
             // decode and print 
@@ -167,7 +164,10 @@ void Tokenizer::GenerateText(infini_train::nn::Module &model, uint32_t batch_siz
         }
         // 将更新后的 CPU 数据同步到 GPU
         x = std::make_shared<infini_train::Tensor>(x_tensor.To(device));
+        return;
     }
+    // return;
     std::cout << std::endl;
+    // return;
 }
 } // namespace infini_train
