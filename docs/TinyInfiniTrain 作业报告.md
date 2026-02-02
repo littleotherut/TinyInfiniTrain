@@ -1,7 +1,7 @@
 # TinyInfiniTrain 作业报告
 
 ## 一、test 通过截图
-![alt text](image-1.png)
+
 ![alt text](image.png)
 ## 二、作业步骤
 

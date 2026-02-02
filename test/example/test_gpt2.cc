@@ -213,9 +213,7 @@ TEST_F(GPT2TrainingTest, LogitsConsistency) {
             if (!tokenizer) {
                 continue;
             }
-            std::cout << "\n=== Generated Text at Step " << (step + 1) << " ===\n";
             tokenizer->GenerateText(*model, batch_size, sequence_length, text_length, device);
-            std::cout<<"tst"<<std::endl;
         }
     }
 
